@@ -26,6 +26,47 @@ except ImportError:
     RICH_AVAILABLE = False
 
 
+def _fetch_num_ctx(client: Client, model: str) -> int:
+    """
+    Return the context-window size for *model* as reported by Ollama.
+
+    Parses ``parameters`` (a multi-line string such as ``"num_ctx 4096"``) first,
+    then falls back to ``model_info`` architecture keys.  Returns 0 if the value
+    cannot be determined so callers can fall back to the message-count cap.
+    """
+    try:
+        info = client.show(model)
+    except Exception:
+        return 0
+
+    # ``parameters`` may be a plain string ("num_ctx           4096\n…") or, in
+    # some SDK versions, a dict.
+    params = getattr(info, 'parameters', None) or {}
+    if isinstance(params, str):
+        m = re.search(r'(?m)^\s*num_ctx\s+(\d+)', params)
+        if m:
+            return int(m.group(1))
+    elif isinstance(params, dict):
+        val = params.get('num_ctx')
+        if val is not None:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                pass
+
+    # Fallback: architecture metadata dict present in newer Ollama versions.
+    model_info: dict = getattr(info, 'model_info', None) or {}
+    for key in ('llama.context_length', 'arch.context_length', 'context_length'):
+        val = model_info.get(key)
+        if val is not None:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                pass
+
+    return 0
+
+
 def _discover_user_config(
     explicit: Optional[Path],
     script_dir: Path,
@@ -105,6 +146,8 @@ def bootstrap(
         )
         sys.exit(1)
 
+    num_ctx = _fetch_num_ctx(client, user.ollama_model)
+
     leak = re.compile(d.model.channel_leak_regex, re.IGNORECASE)
     latex_pairs = d.latex_symbol_pairs
 
@@ -120,6 +163,7 @@ def bootstrap(
         channel_leak=leak,
         config_source=source,
         vault_path_defaulted=vault_path_defaulted,
+        num_ctx=num_ctx,
     )
     _init_console(ctx)
     set_context(ctx)

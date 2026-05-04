@@ -33,6 +33,10 @@ class ApplicationContext:
     config_source: str = ''
     vision_model_override: str = ''
     vault_path_defaulted: bool = False
+    # Context-window size fetched from Ollama at startup (0 = unknown / not fetched).
+    num_ctx: int = 0
+    # prompt_eval_count from the most recent Ollama response; used to gauge token fill.
+    last_prompt_tokens: int = 0
 
 
 _CTX: Optional[ApplicationContext] = None

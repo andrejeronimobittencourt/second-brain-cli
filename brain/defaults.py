@@ -150,6 +150,10 @@ class ContextCompression:
     """
 
     enabled: bool = True
+    # Fraction of the model's token budget at which rolling compression fires.
+    # Only used when ``num_ctx`` was successfully fetched from Ollama at startup;
+    # falls back to ``Limits.max_context_messages`` otherwise.
+    context_fill_ratio: float = 0.75
     max_summary_lines: int = 8
     max_transcript_chars_per_message: int = 6000
     summary_message_label: str = (

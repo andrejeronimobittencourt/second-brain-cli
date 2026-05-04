@@ -12,6 +12,16 @@ from brain.defaults import AppDefaults
 _INLINE_MATH_DOLLAR = re.compile(r'\$(?P<body>[^$\n]+?)\$')
 _TEXT_BRACE = re.compile(r'\\text\{([^}]*)\}')
 
+# U+FE0F (emoji presentation selector) after pictographs (e.g. U+1F5BC + VS16):
+# Rich ``cell_len`` and some terminals disagree on whether VS16 adds width, so
+# Markdown panel borders can drift by one column — strip before layout.
+_VS16_EMOJI_PRESENTATION = '\uFE0F'
+
+
+def _strip_emoji_presentation_vs16(text: str) -> str:
+    """Drop VS16 so prewrap / Rich panels match common TTY display width."""
+    return text.replace(_VS16_EMOJI_PRESENTATION, '')
+
 
 def normalize_markdown_rulers(text: str, d: AppDefaults) -> str:
     """Collapse over-long HR lines so Rich panels stay aligned."""
@@ -204,6 +214,7 @@ def sanitize_assistant_text(text: str, ctx: ApplicationContext) -> str:
     """Strip channel leaks, dedupe paragraphs, approximate LaTeX."""
     if not text:
         return text
+    text = _strip_emoji_presentation_vs16(text)
     d = ctx.defaults
     text = normalize_markdown_rulers(text, d)
     text = ctx.channel_leak.sub('\n\n', text)

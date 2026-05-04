@@ -1,22 +1,36 @@
-# Second Brain CLI
+<h1 align="center">🧠 Second Brain CLI</h1>
 
 <p align="center">
   <img src="assets/logo.png" alt="Second Brain CLI" width="280">
 </p>
 
-A small **Python CLI** that connects a **local [Ollama](https://ollama.com/)** model to a **Markdown vault**: a directory tree of `.md` notes (and images or other assets beside them). You chat in the terminal; the model can list folders, read and edit notes, search, follow wikilinks, and (with a vision-capable model) describe images in the vault.
+<p align="center">
+  <b>Chat with your Markdown vault using a local AI.</b><br>
+  <i>No cloud. No API keys. Your notes stay on your machine.</i>
+</p>
 
-The vault is just a folder on disk — no specific app is required. Popular setups include **Obsidian**, Logseq, Zettlr, or a plain `git` repo of Markdown files.
+<p align="center">
+  <a href="#requirements">Requirements</a> •
+  <a href="#quick-start">Quick start</a> •
+  <a href="#configuration-second_brain_userjson">Configuration</a> •
+  <a href="#slash-commands-repl">Commands</a>
+</p>
 
-Everything runs on your machine: no cloud API keys required for the default setup.
+---
+
+## Why this exists
+
+Most AI note tools want your data in their cloud. **Second Brain CLI** brings the AI to your local files instead — no subscriptions, no data leaving your machine.
+
+Point it at any directory of `.md` files — **Obsidian**, Logseq, Zettlr, or a plain `git` repo — and start a conversation. The model can navigate your folder structure, read and edit notes, search by text or tag, follow wikilinks, and describe images, using whatever [Ollama](https://ollama.com/) model you already have pulled.
 
 ## Features
 
-- **Local LLM** via Ollama (streaming chat with tool calls).
-- **Vault-scoped tools**: directory listing, read/create/edit/move/rename/delete notes, full-text search, tag search, backlinks, frontmatter updates, image read (OCR/describe).
-- **Session persistence**: optional resume from a JSON history file stored in the vault (configurable filename).
-- **Rolling context compression**: when the conversation exceeds the configured window, older turns are summarised into one compact message rather than silently dropped.
-- **Rich terminal UI** when `rich` is installed (graceful fallback to plain text): panels for answers, a spinner while the model generates, and compact one-line logs for `create_note` / `edit_note` bodies.
+- **🔒 Fully local** — powered by Ollama; no API keys, no cloud sync.
+- **🛠️ Vault tools**: list directories, read/create/edit/move/rename/delete notes, full-text search, tag search, backlinks, frontmatter updates, and image OCR/describe.
+- **💾 Session persistence**: pick up where you left off with `--resume`; history is stored as JSON inside your vault.
+- **🧠 Rolling context compression**: older turns are summarised instead of silently dropped when the model's token window fills, keeping coherent long sessions.
+- **💻 Rich terminal UI**: answer panels, generation spinner, and compact tool logs — graceful plain-text fallback when `rich` isn't installed.
 
 ## Requirements
 

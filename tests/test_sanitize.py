@@ -4,13 +4,24 @@ from __future__ import annotations
 
 from rich.cells import cell_len
 
+from brain.context import ApplicationContext
 from brain.defaults import APP_DEFAULTS
 from brain.sanitize import (
     approximate_latex_display,
     hard_wrap_line,
     normalize_markdown_rulers,
     prewrap_for_terminal,
+    sanitize_assistant_text,
 )
+
+
+class TestSanitizeAssistantText:
+    def test_strips_emoji_vs16_for_panel_width(self, ctx: ApplicationContext) -> None:
+        """U+FE0F after pictograph: drop so Rich vs terminal width stay aligned."""
+        raw = '🖼\uFE0F Breakdown by Image:\n\nHello.'
+        out = sanitize_assistant_text(raw, ctx)
+        assert '\uFE0F' not in out
+        assert '🖼 Breakdown' in out
 
 
 class TestNormalizeMarkdownRulers:

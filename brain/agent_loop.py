@@ -237,27 +237,60 @@ def _save_history(messages: list[dict[str, Any]]) -> None:
 
 def _trim_context(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    Enforce ``max_context_messages`` on non-system roles.
+    Trim non-system context, optionally compressing evicted turns into a summary.
 
-    When the window is exceeded and rolling summary is enabled, older turns
-    are summarized into one synthetic assistant message, then the most recent
-    ``cap - 1`` turns are kept so total non-system messages stays at or below
-    *cap*. On summarizer failure, falls back to plain truncation (same as
-    before compression existed).
+    **Trigger logic** (two independent signals, either fires compression):
+
+    1. *Token fill* — when Ollama reported ``num_ctx`` at startup and the last
+       response included ``prompt_eval_count``, compress when the prompt consumed
+       ≥ ``context_fill_ratio`` of the model's token budget.
+    2. *Message count* — fallback cap (``max_context_messages``) always enforced;
+       used as the sole trigger when token counts are unavailable.
+
+    When rolling summary is enabled, evicted messages are summarized into one
+    synthetic assistant message placed before the retained tail.  On failure,
+    falls back to plain truncation.
     """
     ctx = get_context()
+    cc = ctx.defaults.context_compression
     cap = ctx.defaults.limits.max_context_messages
     system_msgs = [m for m in messages if m.get('role') == 'system']
     rest = [m for m in messages if m.get('role') != 'system']
 
+    # --- Determine whether the token-fill threshold has been crossed ---
+    token_pressure = False
+    if ctx.num_ctx > 0 and ctx.last_prompt_tokens > 0:
+        fill = ctx.last_prompt_tokens / ctx.num_ctx
+        token_pressure = fill >= cc.context_fill_ratio
+        logger.debug(
+            'Token fill: %d / %d = %.1f%% (threshold %.0f%%)',
+            ctx.last_prompt_tokens,
+            ctx.num_ctx,
+            fill * 100,
+            cc.context_fill_ratio * 100,
+        )
+
+    # --- Always enforce the hard message-count cap ---
     dropped, kept = _split_truncate_pair_aware(rest, cap)
-    if not dropped:
+
+    if not dropped and not token_pressure:
+        # Neither signal triggered — nothing to do.
         return system_msgs + kept
 
-    cc = ctx.defaults.context_compression
-    if cap < 2 or not cc.enabled:
+    if not cc.enabled or cap < 2:
+        # Compression disabled: apply hard cap only.
         return system_msgs + kept
 
+    # --- Token pressure without message-cap overflow: force a split ---
+    # Evict the older half so the summary replaces roughly half the context,
+    # giving the model headroom before the next compression cycle.
+    if not dropped and token_pressure:
+        split_cap = max(1, len(rest) // 2)
+        dropped, kept = _split_truncate_pair_aware(rest, split_cap)
+        if not dropped:
+            return system_msgs + kept
+
+    # --- Summarize evicted turns ---
     summary_body: str | None = None
     wait = ui.generation_wait_start(ctx.defaults.ui.cli_compression_wait_message)
     try:
@@ -417,6 +450,16 @@ def _agent_chat(
             inner['tool_calls'] = last_tool_calls
 
         out['message'] = inner
+
+        # Track how many prompt tokens were consumed so _trim_context can compare
+        # against ctx.num_ctx for a token-fill-based compression trigger.
+        if isinstance(final, dict):
+            prompt_tokens = final.get('prompt_eval_count') or 0
+        else:
+            prompt_tokens = getattr(final, 'prompt_eval_count', 0) or 0
+        if prompt_tokens:
+            ctx.last_prompt_tokens = int(prompt_tokens)
+
         return out, streamed_any, content_echoed_to_tty
     finally:
         wait.finish()
@@ -553,6 +596,12 @@ def run_agent(
             'directory. Set vault_path to your Markdown vault folder (your notes root).',
         )
     ui.print_info(f'Model : {ctx.user.ollama_model}')
+    if ctx.num_ctx > 0:
+        threshold_pct = ctx.defaults.context_compression.context_fill_ratio * 100
+        ui.print_info(
+            f'Context : {ctx.num_ctx:,} tokens '
+            f'(compresses at {threshold_pct:.0f}% fill)',
+        )
     ui.print_info(f'Ollama : {ctx.user.ollama_host}')
     ui.print_info(f'Config : {ctx.config_source}')
     if think:
@@ -588,7 +637,15 @@ def run_agent(
     def _slash_history() -> None:
         count = sum(1 for m in messages if m.get('role') != 'system')
         lim = ctx.defaults.limits.max_context_messages
-        ui.print_info(f'{count} messages in current context (limit: {lim}).')
+        info = f'{count} messages in current context (cap: {lim})'
+        if ctx.num_ctx > 0:
+            fill_pct = (ctx.last_prompt_tokens / ctx.num_ctx * 100) if ctx.last_prompt_tokens else 0
+            threshold_pct = ctx.defaults.context_compression.context_fill_ratio * 100
+            info += (
+                f'; last prompt {ctx.last_prompt_tokens:,} / {ctx.num_ctx:,} tokens'
+                f' ({fill_pct:.0f}% — compresses at {threshold_pct:.0f}%)'
+            )
+        ui.print_info(info + '.')
 
     slash_handlers: dict[str, Callable[[], None]] = {
         '/help': _slash_help,
