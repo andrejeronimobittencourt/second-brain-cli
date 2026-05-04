@@ -1,0 +1,15 @@
+{
+  "_comment": "Keys starting with _ are ignored by the loader — safe for notes.",
+  "vault_path": "",
+  "ollama_host": "http://127.0.0.1:11434",
+  "ollama_model": "gemma4:latest",
+  "ollama_vision_model": "",
+  "history_filename": ".agent_history.json",
+  "note_encoding": "utf-8",
+  "_about_system_prompt": "If non-empty, replaces the entire built-in system message.",
+  "system_prompt": "",
+  "_about_vault_instructions": "Optional. Appended after the base system text (built-in or system_prompt). Use for editor plugins, link syntax, or folder habits.",
+  "vault_instructions": "",
+  "log_level": "",
+  "log_file": ""
+}
