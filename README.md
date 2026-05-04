@@ -12,17 +12,17 @@ Everything runs on your machine: no cloud API keys required for the default setu
 
 ## Features
 
-- **Local LLM** via Ollama (`chat` with tools, optional streaming).
-- **Vault-scoped tools**: directory listing, read/create/edit/move/rename/delete notes, search, tags, backlinks, frontmatter updates, image read (OCR/describe).
-- **Session persistence**: optional resume from a JSON history file stored under the vault path (configurable filename).
-- **Rolling context summary**: when the conversation exceeds the configured window, older turns can be compressed into one assistant message instead of being discarded (see `brain/defaults.py` → `ContextCompression`; disable in tests via `context_compression.enabled` if you fork defaults).
-- **Rich terminal UI** when `rich` is installed (graceful fallback to plain text): panels for answers, a wait indicator while the model streams (no duplicate streamed text), and shortened logs for very long `create_note` / `edit_note` bodies.
+- **Local LLM** via Ollama (streaming chat with tool calls).
+- **Vault-scoped tools**: directory listing, read/create/edit/move/rename/delete notes, full-text search, tag search, backlinks, frontmatter updates, image read (OCR/describe).
+- **Session persistence**: optional resume from a JSON history file stored in the vault (configurable filename).
+- **Rolling context compression**: when the conversation exceeds the configured window, older turns are summarised into one compact message rather than silently dropped.
+- **Rich terminal UI** when `rich` is installed (graceful fallback to plain text): panels for answers, a spinner while the model generates, and compact one-line logs for `create_note` / `edit_note` bodies.
 
 ## Requirements
 
 - **Python** 3.10 or newer (3.12+ recommended).
 - **[Ollama](https://ollama.com/)** installed and running, with at least one **chat** model pulled (e.g. `ollama pull gemma4`).
-- Python packages listed in **`requirements.txt`** (`ollama`, `rich`, `PyYAML`).
+- Python packages listed in **`requirements.txt`**: `ollama` (required), `rich` (recommended — plain-text fallback works without it), `PyYAML` (optional — only needed for `update_frontmatter` and `search_by_tag`).
 
 ## Quick start
 
@@ -36,7 +36,7 @@ Everything runs on your machine: no cloud API keys required for the default setu
    pip install -r requirements.txt
    ```
 
-3. **Copy** `second_brain_user.example.json` to **`second_brain_user.json`** next to `agent.py`.
+3. **Copy** `second_brain_user.example.json` to **`second_brain_user.json`** next to `agent.py`. This file is gitignored — your local settings stay off the remote.
 
 4. **Edit** `second_brain_user.json`: set **`vault_path`** to the root folder of your notes (the directory that contains your `.md` files and any subfolders you use). Set **`ollama_model`** to a model you have pulled.
 
@@ -64,6 +64,16 @@ If `second_brain_user.json` is missing, the app still starts but uses factory de
 | `log_file` | Optional path for `brain` logger file output. |
 
 Keys starting with **`_`** are ignored by the loader (handy for comments in JSON).
+
+### Customising the model's behaviour with `vault_instructions`
+
+`vault_instructions` is appended to the system prompt every session. Use it to tell the model how *your* vault is organised so it doesn't have to guess:
+
+```json
+"vault_instructions": "My vault uses Zettelkasten. All permanent notes live in Zettelkasten/ with date-prefixed filenames (e.g. 2024-03-15 Concept Name). Fleeting notes go in Inbox/. When creating a note, always ask which folder it belongs in if it isn't obvious. Tags follow the format #topic/subtopic."
+```
+
+You can also use it to name conventions, set the preferred link style (`[[wikilinks]]` vs `[label](path)`), or restrict what the model may and may not do in your vault.
 
 **Config file location** (first match wins if you pass `--config`):
 
@@ -117,5 +127,7 @@ python -m pytest tests/ -v
 
 ## Security notes
 
-- Tools only access paths **inside** the configured vault (path traversal is rejected).
-- **`delete_note`** requires an explicit `confirm=true` argument after the user has agreed; accidental deletion by a bare tool call is blocked by design.
+- Tools only access paths **inside** the configured vault — path traversal attempts are rejected.
+- **`delete_note`** requires `confirm=true`; the default bare call is a no-op error. Note that the confirmation is enforced at the tool level, not by a REPL `y/n` prompt — the model must pass the flag, which it will do when the user's message clearly requests deletion.
+- **`second_brain_user.json`** is gitignored. Do not force-add it; it contains your local vault path and Ollama host.
+- Vault files with bytes invalid in the configured encoding are read with `errors='replace'` (bad bytes become `�`) so they never cause a crash or corrupt the chat history.
