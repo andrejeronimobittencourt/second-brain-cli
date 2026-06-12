@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <img src="assets/demo.gif" alt="Second Brain CLI demo — chat with a local vault via Ollama" width="720">
+</p>
+
+<p align="center">
   <a href="#requirements">Requirements</a> •
   <a href="#quick-start">Quick start</a> •
   <a href="#configuration-second_brain_userjson">Configuration</a> •
