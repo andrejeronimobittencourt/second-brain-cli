@@ -13,12 +13,7 @@ from brain.agent.compression import (
     vault_activity_from_messages,
 )
 from brain.agent.ollama_chat import agent_chat, truncate_tool_result
-from brain.agent.system import (
-    effective_system_prompt,
-    empty_answer_fallback,
-    sanitize_print_mode_answer,
-    wrap_print_mode_user_message,
-)
+from brain.agent.system import effective_system_prompt, empty_answer_fallback
 from brain.agent.tool_loop import run_tool_loop
 from brain.repl.commands import format_history, format_stats
 from brain.core.context import ApplicationContext, set_context
@@ -68,27 +63,6 @@ class TestEffectiveSystemPrompt:
         printed = empty_answer_fallback()
         assert printed == ctx.defaults.model.empty_answer_print_message
         assert '/clear' not in printed
-
-
-class TestPrintModeAnswerSanitize:
-    def test_strips_trailing_explore_invite(self):
-        raw = (
-            'I found these folders:\n\n'
-            '* **Math/** (5 notes)\n\n'
-            'Which folder or topic would you like to explore next?'
-        )
-        out = sanitize_print_mode_answer(raw)
-        assert 'Which folder' not in out
-        assert 'Math/**' in out
-
-    def test_keeps_legitimate_question_in_body(self):
-        text = 'The note asks: what is 2+2? Answer: 4.'
-        assert sanitize_print_mode_answer(text) == text
-
-    def test_wrap_print_user_message(self):
-        wrapped = wrap_print_mode_user_message('list folders')
-        assert wrapped.startswith('list folders')
-        assert 'One-shot CLI' in wrapped
 
 
 class TestFormatHistory:

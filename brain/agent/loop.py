@@ -15,7 +15,6 @@ from brain.agent.system import (
     effective_system_prompt,
     empty_answer_fallback,
     refresh_system_message,
-    sanitize_print_mode_answer,
     wrap_print_mode_user_message,
 )
 from brain.agent.tool_loop import run_tool_loop
@@ -119,7 +118,7 @@ def run_agent(
     if print_mode:
         try:
             _run_user_turn(print_prompt.strip())
-            answer = sanitize_print_mode_answer(final_assistant_text(messages))
+            answer = final_assistant_text(messages)
             if answer:
                 print(answer)
             elif not ctx.last_answer_streamed_to_tty:

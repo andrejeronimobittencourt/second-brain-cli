@@ -2,27 +2,10 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from brain.core.context import get_context
 from brain.core.system_prompt import build_system_prompt
-
-_FOLLOWUP_INVITE_MARKERS: tuple[str, ...] = (
-    'let me know',
-    'would you like',
-    'which folder',
-    'which topic',
-    'explore next',
-    'want me to',
-    'tell me if',
-    'feel free to',
-    "if you'd like",
-    'if you would like',
-    'shall i',
-    'do you want',
-    'anything else',
-)
 
 
 def effective_system_prompt() -> str:
@@ -53,31 +36,6 @@ def wrap_print_mode_user_message(user_input: str) -> str:
         '[One-shot CLI: reply with the full answer only. '
         'Do not ask follow-up questions or invite further exploration.]'
     )
-
-
-def _looks_like_followup_invite(paragraph: str) -> bool:
-    lower = paragraph.lower()
-    if not lower.endswith('?'):
-        return False
-    return any(marker in lower for marker in _FOLLOWUP_INVITE_MARKERS)
-
-
-def sanitize_print_mode_answer(text: str) -> str:
-    """
-    Drop a trailing conversational invite from one-shot CLI output.
-
-    Safety net when the model ignores print-mode instructions.
-    """
-    stripped = text.strip()
-    if not stripped:
-        return stripped
-    paragraphs = re.split(r'\n\s*\n', stripped)
-    while len(paragraphs) >= 2:
-        last = paragraphs[-1].strip()
-        if not _looks_like_followup_invite(last):
-            break
-        paragraphs.pop()
-    return '\n\n'.join(paragraphs).strip()
 
 
 def empty_answer_fallback() -> str:
