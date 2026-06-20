@@ -6,10 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from brain.repl.display import scroll_hint_line
 from brain.repl.input import (
     ReplInput,
     ReplStatus,
+    classify_repl_submit,
     format_toolbar,
+    input_hidden_line_counts,
     input_history_path,
     repl_input_is_locked,
     repl_prompt_prefix_text,
@@ -156,6 +159,47 @@ class TestPromptPrefix:
         assert repl_prompt_prefix_text('You', 0, 0) == 'You: '
         assert repl_prompt_prefix_text('You', 0, 1) == '     '
         assert repl_prompt_prefix_text('You', 1, 0) == '     '
+
+
+class TestInputScrollHints:
+    def test_scroll_hint_line_matches_transcript_style(self):
+        assert scroll_hint_line(direction='up', count=3) == '↑ 3 more ─────────────────'
+        assert scroll_hint_line(direction='down', count=7) == '↓ 7 more ─────────────────'
+
+    def test_hidden_line_counts_when_content_fits(self):
+        assert input_hidden_line_counts(
+            total_lines=4,
+            window_height=6,
+            vertical_scroll=0,
+        ) == (0, 0)
+
+    def test_hidden_line_counts_when_scrolled(self):
+        assert input_hidden_line_counts(
+            total_lines=12,
+            window_height=6,
+            vertical_scroll=4,
+        ) == (4, 2)
+
+    def test_hidden_line_counts_at_bottom(self):
+        assert input_hidden_line_counts(
+            total_lines=12,
+            window_height=6,
+            vertical_scroll=6,
+        ) == (6, 0)
+
+
+class TestReplSubmitHistory:
+    def test_empty_submit_is_discarded(self):
+        assert classify_repl_submit('   \n') == (True, '')
+
+    def test_nonempty_submit_is_normalized(self):
+        assert classify_repl_submit('hello\n') == (False, 'hello')
+
+    def test_multiline_submit_preserves_body(self):
+        assert classify_repl_submit('line one\nline two\n') == (
+            False,
+            'line one\nline two',
+        )
 
 
 class TestReplKeyBindings:

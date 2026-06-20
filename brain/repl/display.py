@@ -27,6 +27,12 @@ class _SpinnerState:
     frame: int = 0
 
 
+def scroll_hint_line(*, direction: str, count: int) -> str:
+    """Return one scroll hint row matching the transcript viewport style."""
+    arrow = '↑' if direction == 'up' else '↓'
+    return f'{arrow} {count} more ─────────────────'
+
+
 def _wrap_prompt_paragraph(paragraph: str, width: int) -> list[str]:
     """Hard-wrap one paragraph for the REPL transcript."""
     if not paragraph.strip():
@@ -565,11 +571,11 @@ class ReplDisplaySink:
         visible = lines[offset:offset + content_slots]
         output: list[str] = []
         if offset > 0:
-            output.append(f'↑ {offset} more ─────────────────')
+            output.append(scroll_hint_line(direction='up', count=offset))
         output.extend(visible)
         below = max(0, total - offset - len(visible))
         if below > 0:
-            output.append(f'↓ {below} more ─────────────────')
+            output.append(scroll_hint_line(direction='down', count=below))
         return '\n'.join(output[:viewport]), total
 
     def visible_transcript_plain(self, scroll: int, viewport: int) -> tuple[str, int]:

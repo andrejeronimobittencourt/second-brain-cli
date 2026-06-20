@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from brain.core.context import get_context
-from brain.repl.display import ReplDisplaySink
+from brain.repl.display import ReplDisplaySink, scroll_hint_line
 from brain.repl.display_port import (
     NullDisplayPort,
     PlainTtyDisplayPort,
@@ -37,6 +37,7 @@ Layout = None  # type: ignore[misc, assignment]
 Window = None  # type: ignore[misc, assignment]
 BufferControl = None  # type: ignore[misc, assignment]
 FormattedTextControl = None  # type: ignore[misc, assignment]
+ConditionalContainer = None  # type: ignore[misc, assignment]
 HSplit = None  # type: ignore[misc, assignment]
 Style = None  # type: ignore[misc, assignment]
 FormattedText = None  # type: ignore[misc, assignment]
@@ -57,7 +58,7 @@ try:
     from prompt_toolkit.key_binding.defaults import load_key_bindings
     from prompt_toolkit.layout import Layout
     from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-    from prompt_toolkit.layout.containers import HSplit, Window
+    from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
     from prompt_toolkit.layout.dimension import Dimension
     from prompt_toolkit.patch_stdout import patch_stdout
     from prompt_toolkit.styles import Style
@@ -368,6 +369,48 @@ def _needed_input_lines(
     return max(1, min(max_lines, needed))
 
 
+def classify_repl_submit(text: str) -> tuple[bool, str]:
+    """
+    Classify one submitted buffer for the accept handler.
+
+    Returns ``(is_empty, normalized_text)``. When not empty, the handler must
+    leave ``normalized_text`` in the buffer and return ``False`` so
+    prompt_toolkit can ``append_to_history()`` before ``reset()``.
+    """
+    stripped = text.rstrip()
+    if not stripped.strip():
+        return True, ''
+    return False, stripped
+
+
+def input_hidden_line_counts(
+    *,
+    total_lines: int,
+    window_height: int,
+    vertical_scroll: int,
+) -> tuple[int, int]:
+    """Return ``(hidden_above, hidden_below)`` wrapped display rows in the input window."""
+    if window_height < 1 or total_lines <= window_height:
+        return 0, 0
+    above = max(0, vertical_scroll)
+    below = max(0, total_lines - above - window_height)
+    return above, below
+
+
+def _read_input_scroll_hints(input_window: Any | None) -> tuple[int, int]:
+    """Read hidden line counts from the last input-window render pass."""
+    if input_window is None:
+        return 0, 0
+    render_info = getattr(input_window, 'render_info', None)
+    if render_info is None:
+        return 0, 0
+    return input_hidden_line_counts(
+        total_lines=render_info.ui_content.line_count,
+        window_height=render_info.window_height,
+        vertical_scroll=render_info.vertical_scroll,
+    )
+
+
 class ReplInput:
     """
     Line editor for the interactive REPL.
@@ -478,17 +521,17 @@ class ReplInput:
         def _accept(buff: Buffer) -> bool:
             if self._busy or repl_input_is_locked():
                 return True
-            text = buff.text
-            buff.text = ''
-            layout_state['input_height'] = 1
-            input_window = layout_state.get('input_window')
-            if input_window is not None:
-                input_window.height = 1
-            stripped = text.rstrip()
-            if not stripped.strip():
+            is_empty, normalized = classify_repl_submit(buff.text)
+            if is_empty:
+                buff.text = ''
+                layout_state['input_height'] = 1
+                input_window = layout_state.get('input_window')
+                if input_window is not None:
+                    input_window.height = 1
                 return True
 
-            display.append_user_prompt(stripped)
+            buff.text = normalized
+            display.append_user_prompt(normalized)
             _set_input_locked(True)
 
             def _worker() -> None:
@@ -497,7 +540,7 @@ class ReplInput:
                     with patched_repl_output(), _repl_stdout(display):
                         set_display_port(ReplDisplayPort(sink=display))
                         try:
-                            process_line(stripped)
+                            process_line(normalized)
                         finally:
                             get_context().display.flush_turn()
                 except ReplExit:
@@ -512,7 +555,8 @@ class ReplInput:
                     _schedule_ui_callback(lambda: _set_input_locked(False))
 
             threading.Thread(target=_worker, daemon=True).start()
-            return True
+            # False → prompt_toolkit append_to_history() then reset().
+            return False
 
         history = FileHistory(str(history_path)) if FileHistory is not None else None
         input_locked = Condition(repl_input_is_locked)
@@ -524,12 +568,30 @@ class ReplInput:
 
         layout_state: dict[str, Any] = {
             'input_height': 1,
+            'input_above': 0,
+            'input_below': 0,
             'transcript_viewport': 1,
             'transcript_scroll': 0,
             'transcript_lines': 0,
             'transcript_follow': True,
             'input_window': None,
         }
+
+        def _input_hint_row_count() -> int:
+            return int(layout_state['input_above'] > 0) + int(layout_state['input_below'] > 0)
+
+        def _update_input_scroll_hints() -> bool:
+            if not repl_cfg.multiline_input or self._busy:
+                above = below = 0
+            else:
+                above, below = _read_input_scroll_hints(layout_state.get('input_window'))
+            changed = (
+                layout_state['input_above'] != above
+                or layout_state['input_below'] != below
+            )
+            layout_state['input_above'] = above
+            layout_state['input_below'] = below
+            return changed
 
         def _max_transcript_scroll() -> int:
             total = layout_state['transcript_lines']
@@ -581,7 +643,8 @@ class ReplInput:
                 max_lines=repl_cfg.multiline_max_lines,
             )
             toolbar_h = 1
-            viewport = max(1, term_rows - input_h - toolbar_h)
+            hint_rows = _input_hint_row_count()
+            viewport = max(1, term_rows - input_h - hint_rows - toolbar_h)
 
             _text, total_lines = display.visible_transcript_ansi(0, viewport)
             layout_state['transcript_viewport'] = viewport
@@ -624,6 +687,7 @@ class ReplInput:
 
         if (
             kb is None
+            or ConditionalContainer is None
             or FormattedTextControl is None
             or HSplit is None
             or Window is None
@@ -654,6 +718,21 @@ class ReplInput:
                 return FormattedText([('class:prompt', prefix)])
             return prefix
 
+        def _input_hint_above_text() -> FormattedText | str:
+            count = layout_state['input_above']
+            if count <= 0:
+                return ''
+            return scroll_hint_line(direction='up', count=count)
+
+        def _input_hint_below_text() -> FormattedText | str:
+            count = layout_state['input_below']
+            if count <= 0:
+                return ''
+            return scroll_hint_line(direction='down', count=count)
+
+        input_hint_above_filter = Condition(lambda: layout_state['input_above'] > 0)
+        input_hint_below_filter = Condition(lambda: layout_state['input_below'] > 0)
+
         def _make_root() -> HSplit:
             transcript_window = Window(
                 FormattedTextControl(_transcript_text),
@@ -668,6 +747,25 @@ class ReplInput:
                 height=layout_state['input_height'],
             )
             layout_state['input_window'] = input_window
+            input_stack = HSplit([
+                ConditionalContainer(
+                    Window(
+                        FormattedTextControl(_input_hint_above_text),
+                        height=1,
+                        style='class:input-scroll-hint',
+                    ),
+                    filter=input_hint_above_filter,
+                ),
+                input_window,
+                ConditionalContainer(
+                    Window(
+                        FormattedTextControl(_input_hint_below_text),
+                        height=1,
+                        style='class:input-scroll-hint',
+                    ),
+                    filter=input_hint_below_filter,
+                ),
+            ])
             toolbar_window = Window(
                 FormattedTextControl(_bottom_toolbar),
                 height=1,
@@ -675,7 +773,7 @@ class ReplInput:
             )
             return HSplit([
                 transcript_window,
-                input_window,
+                input_stack,
                 toolbar_window,
             ])
 
@@ -688,6 +786,7 @@ class ReplInput:
 
         style = Style.from_dict({
             'bottom-toolbar': repl_cfg.toolbar_style,
+            'input-scroll-hint': 'ansibrightblack',
             'prompt': 'bold',
             'waiting': 'bold ansiyellow',
         }) if Style is not None else None
@@ -695,7 +794,12 @@ class ReplInput:
         def _before_render(*_args: object) -> None:
             if display.has_spinner():
                 display.tick_spinner()
+            hints_changed = _update_input_scroll_hints()
             _sync_layout_heights()
+            if hints_changed:
+                app = _active_app()
+                if app is not None:
+                    app.invalidate()
 
         def _pre_run() -> None:
             if seed_display is not None:
