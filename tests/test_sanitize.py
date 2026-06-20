@@ -1,13 +1,14 @@
-"""Tests for brain.sanitize text cleanup pipeline."""
+"""Tests for brain.core.sanitize text cleanup pipeline."""
 
 from __future__ import annotations
 
 from rich.cells import cell_len
 
-from brain.context import ApplicationContext
-from brain.defaults import APP_DEFAULTS
-from brain.sanitize import (
+from brain.core.context import ApplicationContext
+from brain.core.defaults import APP_DEFAULTS
+from brain.core.sanitize import (
     approximate_latex_display,
+    extract_display_thinking,
     hard_wrap_line,
     normalize_markdown_rulers,
     prewrap_for_terminal,
@@ -93,3 +94,74 @@ class TestPrewrapForTerminal:
     def test_paragraph_blank_line_not_hard_break(self):
         out = prewrap_for_terminal('first\n\nsecond', 80, APP_DEFAULTS)
         assert out == 'first\n\nsecond'
+
+
+class TestExtractDisplayThinking:
+    def test_strips_numbered_scaffold_and_keeps_last_prose(self):
+        raw = """Here's a thinking process:
+
+1.  **Analyze User Input:** The user asks to list colors.
+2.  **Identify Constraints:** None besides three colors.
+3.  **Formulate Response:** Red, Blue, Green.
+
+Draft: Here are three colors: Red, Blue, Green.
+Check against guidelines: None violated.
+
+Self-Correction/Refinement during thought: The prompt is extremely simple, so I will just list them clearly.
+
+Final Output Generation matches the draft.✅"""
+        out = extract_display_thinking(raw)
+        assert 'Analyze User Input' not in out
+        assert 'Draft:' not in out
+        assert 'extremely simple' in out
+
+    def test_scaffold_only_returns_empty(self):
+        raw = """Thinking Process:
+
+1.  **Analyze User Input:** What is 2+2?
+2.  **Calculate:** 2 + 2 = 4
+3.  **Generate Response:** 4✅"""
+        assert extract_display_thinking(raw) == ''
+
+    def test_partial_scaffold_stream_returns_empty_until_prose(self):
+        partial = "Here's a thinking process:\n\n1.  **Analyze User Input:** math"
+        assert extract_display_thinking(partial) == ''
+        complete = (
+            partial + '\n2.  **Calculate:** 2+2=4\n\n'
+            'The sum is four because addition combines both values.'
+        )
+        out = extract_display_thinking(complete)
+        assert 'Analyze User Input' not in out
+        assert 'addition combines both values' in out
+
+    def test_single_paragraph_mixed_scaffold_keeps_last_prose_line(self):
+        raw = (
+            "1. Analyze the question\n"
+            '2. Compute the answer\n'
+            'Therefore the result is four.'
+        )
+        out = extract_display_thinking(raw)
+        assert 'Analyze' not in out
+        assert 'Therefore the result is four.' in out
+
+    def test_bold_scaffold_steps_are_stripped(self):
+        raw = (
+            '**Analyze User Input:** list colors\n'
+            '**Formulate Response:** red, blue, green\n\n'
+            'I will answer with three common colors.'
+        )
+        out = extract_display_thinking(raw)
+        assert 'Analyze User Input' not in out
+        assert 'three common colors' in out
+
+    def test_streaming_mode_hides_scaffold_until_substantive_tail(self):
+        partial = (
+            "Here's a thinking process:\n\n"
+            '1.  **Analyze User Input:** math\n'
+            '2.  **Calculate:** 2+2=4'
+        )
+        assert extract_display_thinking(partial, streaming=True) == ''
+        with_tail = partial + '\n\nThe answer is four because 2+2 equals 4.'
+        out = extract_display_thinking(with_tail, streaming=True)
+        assert 'Analyze User Input' not in out
+        assert 'answer is four' in out

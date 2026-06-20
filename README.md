@@ -33,28 +33,29 @@ Point it at any directory of `.md` files — **Obsidian**, Logseq, Zettlr, or a 
 - **🔒 Fully local** — powered by Ollama; no API keys, no cloud sync.
 - **🛠️ Vault tools**: list directories, read/create/edit/move/rename/delete notes, full-text search, tag search, backlinks, frontmatter updates, and image OCR/describe.
 - **💾 Session persistence**: pick up where you left off with `--resume`; history is stored as JSON inside your vault.
-- **🧠 Rolling context compression**: older turns are summarised instead of silently dropped when the model's token window fills, keeping coherent long sessions.
-- **💻 Rich terminal UI**: answer panels, generation spinner, and compact tool logs — graceful plain-text fallback when `rich` isn't installed.
+- **🧠 Rolling context compression**: older turns are summarised instead of silently dropped when the model's token window fills, keeping coherent long sessions. On Ollama "prompt too long" errors, the agent compacts once and retries automatically.
+- **🛡️ Resilience**: transient Ollama connection failures retry with backoff; large tool outputs are capped before they fill the context window; vision calls time out after a configurable limit; symlink-safe vault path checks block escape via symlinks.
+- **📇 Search index**: full-text search, backlinks, and tag lookup use a persistent `.agent_search_index.json` in the vault (incrementally updated on writes).
+- **🕐 Runtime context**: every turn appends current local date/time and vault root to the system prompt.
+- **💻 Terminal UI**: scrollable transcript, streamed answers, multiline input, history, status bar, tool logs — falls back to plain text without `rich` or `prompt_toolkit`.
 
 ## Requirements
 
 - **Python** 3.10 or newer (3.12+ recommended).
 - **[Ollama](https://ollama.com/)** installed and running, with at least one **chat** model pulled (e.g. `ollama pull gemma4`).
-- Python packages listed in **`requirements.txt`**: `ollama` (required), `rich` (recommended — plain-text fallback works without it), `PyYAML` (optional — only needed for `update_frontmatter` and `search_by_tag`).
+- Python packages listed in **`requirements.txt`**: `ollama` (required), `rich` and `prompt_toolkit` (recommended for the interactive REPL — line editing, history, streaming answers), `PyYAML` (optional — only needed for `update_frontmatter` and `search_by_tag`).
 
 ## Quick start
 
 1. **Clone** this repository and enter the project directory.
 
-2. **Create a virtual environment** (recommended) and install dependencies:
+2. **Install dependencies**:
 
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate   # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
-3. **Copy** `second_brain_user.example.json` to **`second_brain_user.json`** next to `agent.py`. This file is gitignored — your local settings stay off the remote.
+3. **Copy** `second_brain_user.example.json` to **`second_brain_user.json`** next to `agent.py`.
 
 4. **Edit** `second_brain_user.json`: set **`vault_path`** to the root folder of your notes (the directory that contains your `.md` files and any subfolders you use). Set **`ollama_model`** to a model you have pulled.
 
@@ -76,8 +77,8 @@ If `second_brain_user.json` is missing, the app still starts but uses factory de
 | `ollama_vision_model` | Optional; if empty, `read_image` falls back to `ollama_model` (see below). |
 | `history_filename` | Session file name (default `.agent_history.json`, resolved under the vault path). |
 | `note_encoding` | Text encoding for note I/O (default `utf-8`). |
-| `system_prompt` | Optional. When non-empty, **replaces** the entire built-in system prompt. Leave empty to keep the default vault-assistant instructions. |
-| `vault_instructions` | Optional. **Appended** after the effective system text (built-in or `system_prompt`). Use for editor-specific rules (e.g. plugins), link conventions, or how *your* vault is organized — without discarding the generic tool behaviour. |
+| `system_prompt` | Optional. When non-empty, **replaces** the entire built-in system prompt. Leave empty to keep the default vault-assistant instructions. Runtime date/time and vault root are **always appended last**. |
+| `vault_instructions` | Optional. **Appended** after the effective system text (built-in or `system_prompt`), before the runtime footer. Use for editor-specific rules (e.g. plugins), link conventions, or how *your* vault is organized — without discarding the generic tool behaviour. |
 | `log_level` | e.g. `DEBUG`, `INFO`, `WARNING` (default effective level is `WARNING`). |
 | `log_file` | Optional path for `brain` logger file output. |
 
@@ -103,17 +104,19 @@ You can also use it to name conventions, set the preferred link style (`[[wikili
 
 ```text
 python agent.py [--config FILE] [--resume] [--think] [--vision-model MODEL]
-                  [--host URL] [--model NAME]
+                  [--host URL] [--model NAME] [--session NAME] [--print "prompt"]
 ```
 
 | Flag | Purpose |
 | --- | --- |
 | `--config` | Path to your user JSON. |
 | `--resume` | Load prior non-system messages from the session file. |
-| `--think` | Pass extended thinking to Ollama when the client and model support it. |
+| `--think` | Show model reasoning before each answer (requires a thinking-capable Ollama model). |
 | `--vision-model` | Override the model used for `read_image` for this run only. |
 | `--host` | Override `ollama_host` for this run. |
 | `--model` | Override `ollama_model` for this run. |
+| `--session` | Use a named session under `{vault}/.agent_sessions/` instead of the default history file. |
+| `--print` | Run one prompt and print the answer to stdout (no interactive REPL). |
 
 ## Environment variables
 
@@ -122,30 +125,66 @@ python agent.py [--config FILE] [--resume] [--think] [--vision-model MODEL]
 | `SECOND_BRAIN_USER_CONFIG` | Path to `second_brain_user.json` when not using `--config`. |
 | `OLLAMA_VISION_MODEL` | Highest-priority override for the vision model used by `read_image`. |
 
-Precedence for the vision model is: **`OLLAMA_VISION_MODEL`** → **`--vision-model`** → **`ollama_vision_model`** in JSON → **`ollama_model`**. Leaving `ollama_vision_model` empty is fine if your **main** model supports images.
+Precedence for the vision model is: **`--vision-model`** / **`/vision-model`** → **`OLLAMA_VISION_MODEL`** → **`ollama_vision_model`** in JSON → **`ollama_model`**. Leaving `ollama_vision_model` empty is fine if your **main** model supports images.
 
 ## Slash commands (REPL)
 
-Inside the chat loop:
+**Input:** Enter to send; Esc Enter or Ctrl+J for a new line; Ctrl+C or Ctrl+D to exit. Scroll the transcript with Page Up/Down, Shift+Up/Down, Ctrl+Up/Down, Home, or End.
 
-- `/help` — show commands
-- `/clear` — clear in-memory history and delete the session file
-- `/history` — show how many messages are in the rolling context
-- `/search <term>` — quick vault text search without invoking the model
-- `/exit` — save and exit (aliases: `/quit`, `/bye`)
+**Panels:** answers stream in the **Second Brain** panel; with `--think`, **Reasoning** streams first. `/stats`, `/help`, and other slash commands use dim panels.
+
+| Command | Action |
+| --- | --- |
+| `/help` | Commands and key bindings |
+| `/clear` | Clear history and delete the session file |
+| `/history` | Message count in rolling context |
+| `/stats` | Context fill, model, session path |
+| `/compact` | Compress older turns now |
+| `/search <term>` | Vault text search (no LLM) |
+| `/model <name>` | Switch chat model |
+| `/vision-model <name>` | Switch vision model |
+| `/exit` | Save and exit (`/quit`, `/bye`) |
+
+### Scripting
+
+```bash
+python agent.py --print "Summarize all notes in Inbox/"
+```
+
+Prints the final answer to stdout and exits — useful for shell scripts or Obsidian automation.
+
+## Roadmap
+
+Planned later (not in this release): parallel read-only tools, semantic search over the vault.
+
+## Architecture
+
+The Python package is organised into subpackages:
+
+| Package | Role |
+|---------|------|
+| `brain.core` | Context, defaults, session I/O, sanitization, retry/overflow helpers |
+| `brain.agent` | Turn pipeline: Ollama chat, tool loop, context compression, `run_agent` |
+| `brain.repl` | Full-screen REPL input and transcript display |
+| `brain.vault` | Vault paths, `VaultCatalog` (structure + search index), tools |
+| `brain.ui` | Rich panel rendering, spinners, streaming output |
+
+Public entry points: `bootstrap()` and `run_agent()` from `brain` (via `agent.py`).
 
 ## Development
 
-Install dev dependencies and run tests:
-
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/ -v
+python -m pytest
 ```
 
 ## Security notes
 
-- Tools only access paths **inside** the configured vault — path traversal attempts are rejected.
-- **`delete_note`** requires `confirm=true`; the default bare call is a no-op error. Note that the confirmation is enforced at the tool level, not by a REPL `y/n` prompt — the model must pass the flag, which it will do when the user's message clearly requests deletion.
-- **`second_brain_user.json`** is gitignored. Do not force-add it; it contains your local vault path and Ollama host.
-- Vault files with bytes invalid in the configured encoding are read with `errors='replace'` (bad bytes become `�`) so they never cause a crash or corrupt the chat history.
+- Tools only access paths **inside** your configured vault; path traversal and symlink escape attempts are blocked.
+- New notes and moves must target an existing folder — create the folder first if needed.
+- Destructive actions like deleting notes or folders require explicit confirmation. Only empty folders can be deleted.
+- The agent handles massive notes safely by reading them in paginated windows to avoid blowing out its context limit.
+- Image analysis stops after a timeout (default 120s) if the vision model hangs.
+- **`.agent_search_index.json`** lives in the vault root; add it to `.gitignore` if you version-control the vault and do not want the index in git.
+- **`second_brain_user.json`** is gitignored (local paths and Ollama host).
+- File reading is fault-tolerant; invalid text encodings will gracefully degrade rather than crashing the session.

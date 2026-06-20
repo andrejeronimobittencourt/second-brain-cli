@@ -7,9 +7,9 @@ User-only JSON (paths, Ollama, optional system prompt): copy
 or pass ``--config /path/to/user.json``, or set ``SECOND_BRAIN_USER_CONFIG``.
 
 Run:  python agent.py [--config FILE] [--resume] [--think] [--vision-model TAG]
-      [--host URL] [--model NAME]
+      [--host URL] [--model NAME] [--session NAME] [--print "prompt"]
 
-Requires: pip install ollama rich PyYAML
+Requires: pip install ollama rich prompt_toolkit PyYAML
 """
 
 from __future__ import annotations
@@ -44,10 +44,7 @@ def main() -> None:
     parser.add_argument(
         '--think',
         action='store_true',
-        help=(
-            'Enable extended thinking for models that support it (passes think=true to '
-            'Ollama).'
-        ),
+        help='Show model reasoning before each answer (Ollama think=true).',
     )
     parser.add_argument(
         '--vision-model',
@@ -73,6 +70,22 @@ def main() -> None:
             'e.g. gemma4:latest).'
         ),
     )
+    parser.add_argument(
+        '--session',
+        default='',
+        metavar='NAME',
+        help=(
+            'Use a named session file under {vault}/.agent_sessions/ instead of '
+            'the default history file.'
+        ),
+    )
+    parser.add_argument(
+        '--print',
+        default='',
+        metavar='PROMPT',
+        dest='print_prompt',
+        help='Run one prompt and print the answer to stdout (no interactive REPL).',
+    )
     cli = parser.parse_args()
 
     cfg_arg = Path(cli.config).expanduser().resolve() if cli.config.strip() else None
@@ -85,6 +98,7 @@ def main() -> None:
         SCRIPT_DIR,
         cli_host=cli.host.strip(),
         cli_model=cli.model.strip(),
+        session_name=cli.session.strip(),
     )
 
     if not ctx.vault_path.exists():
@@ -94,7 +108,13 @@ def main() -> None:
         )
         sys.exit(1)
 
-    run_agent(resume=cli.resume, think=cli.think, vision_model=cli.vision_model)
+    exit_code = run_agent(
+        resume=cli.resume,
+        think=cli.think,
+        vision_model=cli.vision_model,
+        print_prompt=cli.print_prompt.strip(),
+    )
+    sys.exit(exit_code)
 
 
 if __name__ == '__main__':

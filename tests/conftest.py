@@ -3,16 +3,57 @@
 from __future__ import annotations
 
 import re
+from collections import deque
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from brain.context import ApplicationContext, set_context
-from brain.defaults import APP_DEFAULTS
-from brain.tools import _NOTE_INDEX
-from brain.user_config import UserConfig
+from brain.core.context import ApplicationContext, set_context
+from brain.core.defaults import APP_DEFAULTS
+from brain.core.user_config import UserConfig
+from brain.repl.display_port import NullDisplayPort
+from brain.vault.catalog import get_vault_catalog
+
+
+class MockOllamaClient:
+    """
+    Queue-based Ollama client for agent-loop tests.
+
+    Queue responses with ``queue_response`` or exceptions with ``queue_error``.
+    """
+
+    def __init__(self) -> None:
+        self._queue: deque[Any] = deque()
+        self.chat = MagicMock(side_effect=self._chat)
+
+    def queue_response(self, response: Any) -> None:
+        self._queue.append(response)
+
+    def queue_error(self, exc: BaseException) -> None:
+        self._queue.append(exc)
+
+    def _chat(self, **kwargs: Any) -> Any:
+        if not self._queue:
+            raise RuntimeError('MockOllamaClient: response queue empty')
+        item = self._queue.popleft()
+        if isinstance(item, BaseException):
+            raise item
+        if kwargs.get('stream') is False:
+            return item
+        if isinstance(item, dict):
+
+            def _iter() -> Iterator[dict[str, Any]]:
+                yield {
+                    'message': item.get('message'),
+                    'prompt_eval_count': item.get('prompt_eval_count'),
+                }
+
+            return _iter()
+        return item
 
 
 @pytest.fixture()
@@ -47,9 +88,10 @@ def ctx(vault: Path) -> ApplicationContext:
         ollama_client=MagicMock(),
         latex_pairs=d.latex_symbol_pairs,
         channel_leak=leak,
+        display=NullDisplayPort(),
     )
     set_context(context)
-    _NOTE_INDEX.invalidate()
+    get_vault_catalog().invalidate()
     return context
 
 
@@ -79,7 +121,8 @@ def ctx_compress(vault: Path) -> ApplicationContext:
         ollama_client=client,
         latex_pairs=d.latex_symbol_pairs,
         channel_leak=leak,
+        display=NullDisplayPort(),
     )
     set_context(context)
-    _NOTE_INDEX.invalidate()
+    get_vault_catalog().invalidate()
     return context

@@ -1,10 +1,15 @@
-"""Tests for brain.tools vault operations."""
+"""Tests for brain.vault.tools vault operations."""
 
 from __future__ import annotations
 
-from brain.tools import (
+from dataclasses import replace
+
+from brain.core.context import set_context
+from brain.vault.tools import (
     ToolResult,
+    create_folder,
     create_note,
+    delete_folder,
     delete_note,
     edit_note,
     get_backlinks,
@@ -46,6 +51,20 @@ class TestReadNote:
         assert 'Note A' in msg
         assert 'Outgoing links' in msg
 
+    def test_read_slice(self, ctx, vault):
+        lines = '\n'.join(f'line {i}' for i in range(1, 21))
+        (vault / 'Long Note.md').write_text(lines + '\n', encoding='utf-8')
+        msg = _ok(read_note('Long Note', start_line=1, max_lines=5))
+        assert 'line 1' in msg
+        assert 'line 5' in msg
+        assert 'line 6' not in msg.split('[Outgoing')[0]
+        assert 'start_line=6' in msg
+
+    def test_read_slice_start_beyond_end(self, ctx, vault):
+        (vault / 'Tiny.md').write_text('one\n', encoding='utf-8')
+        msg = _ok(read_note('Tiny', start_line=99, max_lines=5))
+        assert 'one' in msg
+
 
 class TestCreateNote:
     def test_create_and_read(self, ctx, vault):
@@ -60,6 +79,49 @@ class TestCreateNote:
     def test_create_duplicate(self, ctx):
         msg = _err(create_note('Note A', 'dup'))
         assert 'already exists' in msg
+
+    def test_create_requires_existing_folder(self, ctx):
+        msg = _err(create_note('Orphan', 'body', folder='Missing'))
+        assert 'create_folder' in msg
+
+
+class TestCreateFolder:
+    def test_create_and_use(self, ctx, vault):
+        _ok(create_folder('Projects'))
+        assert (vault / 'Projects').is_dir()
+        _ok(create_note('Plan', '# Plan', folder='Projects'))
+        assert (vault / 'Projects' / 'Plan.md').is_file()
+
+    def test_create_nested(self, ctx, vault):
+        _ok(create_folder('A/B/C'))
+        assert (vault / 'A' / 'B' / 'C').is_dir()
+
+    def test_create_duplicate(self, ctx):
+        msg = _err(create_folder('Subfolder'))
+        assert 'already exists' in msg
+
+    def test_create_escape(self, ctx):
+        _err(create_folder('../../tmp'))
+
+
+class TestDeleteFolder:
+    def test_requires_confirm(self, ctx):
+        _ok(create_folder('Empty'))
+        msg = _err(delete_folder('Empty'))
+        assert 'confirmation' in msg
+
+    def test_delete_empty(self, ctx, vault):
+        _ok(create_folder('Empty'))
+        _ok(delete_folder('Empty', confirm=True))
+        assert not (vault / 'Empty').exists()
+
+    def test_delete_nonempty(self, ctx):
+        msg = _err(delete_folder('Subfolder', confirm=True))
+        assert 'not empty' in msg
+
+    def test_cannot_delete_root(self, ctx):
+        msg = _err(delete_folder('', confirm=True))
+        assert 'root' in msg
 
 
 class TestEditNote:
@@ -105,6 +167,10 @@ class TestMoveNote:
         msg = _err(move_note('Deep Note', 'Subfolder'))
         assert 'already exists' in msg
 
+    def test_move_requires_existing_folder(self, ctx):
+        msg = _err(move_note('Note A', 'Missing'))
+        assert 'create_folder' in msg
+
 
 class TestPathTraversal:
     def test_list_directory_escape(self, ctx):
@@ -132,8 +198,8 @@ class TestSearchNotes:
             'line1 keyword\nline2\nline3 keyword\nline4\nline5 keyword\n',
             encoding='utf-8',
         )
-        from brain.tools import _NOTE_INDEX
-        _NOTE_INDEX.invalidate()
+        from brain.vault.catalog import get_vault_catalog
+        get_vault_catalog().invalidate()
         msg = _ok(search_notes('keyword'))
         lines = [ln for ln in msg.splitlines() if 'keyword' in ln and 'Multi' in ln]
         assert len(lines) == 3
@@ -203,3 +269,18 @@ class TestSearchByTag:
     def test_no_matches(self, ctx):
         msg = _ok(search_by_tag('nonexistent_tag'))
         assert 'No notes found' in msg
+
+
+class TestActiveVisionModel:
+    def test_session_override_wins_over_json(self, ctx):
+        ctx.vision_model_override = 'session-vision:latest'
+        from brain.vault.tools import active_vision_model
+
+        assert active_vision_model() == 'session-vision:latest'
+
+    def test_json_fallback(self, ctx):
+        u = replace(ctx.user, ollama_vision_model='json-vision:latest')
+        set_context(replace(ctx, user=u, vision_model_override=''))
+        from brain.vault.tools import active_vision_model
+
+        assert active_vision_model() == 'json-vision:latest'
