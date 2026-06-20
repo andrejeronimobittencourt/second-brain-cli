@@ -31,13 +31,10 @@ Point it at any directory of `.md` files — **Obsidian**, Logseq, Zettlr, or a 
 ## Features
 
 - **🔒 Fully local** — powered by Ollama; no API keys, no cloud sync.
-- **🛠️ Vault tools**: list directories, read/create/edit/move/rename/delete notes, full-text search, tag search, backlinks, frontmatter updates, and image OCR/describe.
-- **💾 Session persistence**: pick up where you left off with `--resume`; history is stored as JSON inside your vault.
-- **🧠 Rolling context compression**: older turns are summarised instead of silently dropped when the model's token window fills, keeping coherent long sessions. On Ollama "prompt too long" errors, the agent compacts once and retries automatically.
-- **🛡️ Resilience**: transient Ollama connection failures retry with backoff; large tool outputs are capped before they fill the context window; vision calls time out after a configurable limit; symlink-safe vault path checks block escape via symlinks.
-- **📇 Search index**: full-text search, backlinks, and tag lookup use a persistent `.agent_search_index.json` in the vault (incrementally updated on writes).
-- **🕐 Runtime context**: every turn appends current local date/time and vault root to the system prompt.
-- **💻 Terminal UI**: scrollable transcript, streamed answers, multiline input, history, status bar, tool logs — falls back to plain text without `rich` or `prompt_toolkit`.
+- **🛠️ Vault tools** — list folders, read/create/edit/move/rename/delete notes, search, tags, backlinks, frontmatter, and image OCR/describe.
+- **💾 Session persistence** — `--resume` continues where you left off; history is stored in your vault.
+- **🧠 Long sessions** — older chat turns are summarised when context fills up.
+- **💻 Terminal UI** — scrollable transcript, streaming answers, multiline input, and a status bar.
 
 ## Requirements
 
@@ -77,8 +74,8 @@ If `second_brain_user.json` is missing, the app still starts but uses factory de
 | `ollama_vision_model` | Optional; if empty, `read_image` falls back to `ollama_model` (see below). |
 | `history_filename` | Session file name (default `.agent_history.json`, resolved under the vault path). |
 | `note_encoding` | Text encoding for note I/O (default `utf-8`). |
-| `system_prompt` | Optional. When non-empty, **replaces** the entire built-in system prompt. Leave empty to keep the default vault-assistant instructions. Runtime date/time and vault root are **always appended last**. |
-| `vault_instructions` | Optional. **Appended** after the effective system text (built-in or `system_prompt`), before the runtime footer. Use for editor-specific rules (e.g. plugins), link conventions, or how *your* vault is organized — without discarding the generic tool behaviour. |
+| `system_prompt` | Optional. Replaces the built-in system prompt when set. |
+| `vault_instructions` | Optional. Extra rules appended each session (vault layout, link style, etc.). |
 | `log_level` | e.g. `DEBUG`, `INFO`, `WARNING` (default effective level is `WARNING`). |
 | `log_file` | Optional path for `brain` logger file output. |
 
@@ -153,38 +150,6 @@ python agent.py --print "Summarize all notes in Inbox/"
 
 Prints the final answer to stdout and exits — useful for shell scripts or Obsidian automation.
 
-## Roadmap
+## Good to know
 
-Planned later (not in this release): parallel read-only tools, semantic search over the vault.
-
-## Architecture
-
-The Python package is organised into subpackages:
-
-| Package | Role |
-|---------|------|
-| `brain.core` | Context, defaults, session I/O, sanitization, retry/overflow helpers |
-| `brain.agent` | Turn pipeline: Ollama chat, tool loop, context compression, `run_agent` |
-| `brain.repl` | Full-screen REPL input and transcript display |
-| `brain.vault` | Vault paths, `VaultCatalog` (structure + search index), tools |
-| `brain.ui` | Rich panel rendering, spinners, streaming output |
-
-Public entry points: `bootstrap()` and `run_agent()` from `brain` (via `agent.py`).
-
-## Development
-
-```bash
-pip install -r requirements-dev.txt
-python -m pytest
-```
-
-## Security notes
-
-- Tools only access paths **inside** your configured vault; path traversal and symlink escape attempts are blocked.
-- New notes and moves must target an existing folder — create the folder first if needed.
-- Destructive actions like deleting notes or folders require explicit confirmation. Only empty folders can be deleted.
-- The agent handles massive notes safely by reading them in paginated windows to avoid blowing out its context limit.
-- Image analysis stops after a timeout (default 120s) if the vision model hangs.
-- **`.agent_search_index.json`** lives in the vault root; add it to `.gitignore` if you version-control the vault and do not want the index in git.
-- **`second_brain_user.json`** is gitignored (local paths and Ollama host).
-- File reading is fault-tolerant; invalid text encodings will gracefully degrade rather than crashing the session.
+- The assistant only reads and writes files **inside** your configured vault.
